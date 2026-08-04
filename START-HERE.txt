@@ -1,0 +1,25 @@
+제약사 공지 통합 HTML 플러그인 - 빠른 시작
+================================================
+
+이 플러그인은 beodnamu_ITteam에서 관리하는 사내 전용 배포본입니다.
+
+1. ZIP 파일 전체를 아래 권장 경로에 압축 해제합니다.
+   C:\beodnamu\codex-plugins\pharma-plugin-marketplace
+
+2. 압축을 푼 폴더 안에 다음 항목이 있는지 확인합니다.
+   .agents
+   plugins
+   README.md
+   직원용_설치_및_사용설명서.md
+
+3. PowerShell에서 다음 명령을 실행합니다.
+   codex plugin marketplace add "C:\beodnamu\codex-plugins\pharma-plugin-marketplace"
+   codex plugin add pharma-notice-html@pharma-team
+
+4. Codex를 새 작업으로 열고 다음 문구로 시작합니다.
+   @pharma-notice-html 제약사 공지 이미지를 올릴게요. 업로드 완료 후 분석해 주세요.
+
+자세한 내용과 문제 해결 방법은
+직원용_설치_및_사용설명서.md 파일을 확인하세요.
+
+사내 전용 / 외부 배포 및 무단 재배포 금지

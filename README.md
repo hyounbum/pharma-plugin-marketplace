@@ -6,6 +6,13 @@
 
 배포 및 관리 담당: `beodnamu_ITteam`
 
+## 직원용 시작 안내
+
+GitHub 계정 없이 ZIP으로 전달받은 직원은 다음 문서를 먼저 확인하세요.
+
+- `START-HERE.txt`: 가장 짧은 설치 순서
+- `직원용_설치_및_사용설명서.md`: 다운로드, 설치, 사용, 업데이트, 문제 해결 전체 안내
+
 ## 포함 항목
 
 - `plugins/pharma-notice-html/.codex-plugin/plugin.json`: 플러그인 매니페스트
