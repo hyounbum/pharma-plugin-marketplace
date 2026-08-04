@@ -1,0 +1,26 @@
+{
+  "name": "pharma-notice-html",
+  "version": "0.1.0",
+  "description": "제약사 공지 이미지를 승인형 초안으로 검토하고 기준 디자인의 HTML·PDF 생성을 안내하는 Codex 플러그인",
+  "author": {
+    "name": "beodnamu_ITteam"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "제약사 공지 통합 HTML",
+    "shortDescription": "공지 이미지 검토부터 승인·HTML·PDF 생성까지 안내합니다.",
+    "longDescription": "제약사 공지 이미지에서 확인된 정보만 구조화하고, 수정·제외·명시적 승인 절차를 거쳐 내장 기준 디자인의 HTML과 PDF를 생성하도록 안내합니다.",
+    "developerName": "beodnamu_ITteam",
+    "category": "Productivity",
+    "capabilities": [
+      "Image analysis",
+      "Structured review",
+      "Document generation"
+    ],
+    "defaultPrompt": [
+      "제약사 공지 이미지를 올릴게요. 업로드 완료 후 분석해 주세요.",
+      "현재 공지 초안의 수정 확인 목록을 보여 주세요.",
+      "승인된 공지를 HTML과 PDF로 생성해 주세요."
+    ]
+  }
+}

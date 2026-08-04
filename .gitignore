@@ -1,0 +1,12 @@
+# Codex/local state
+.codex/
+.plugin-update/
+
+# Generated artifacts
+output/
+*.pdf
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.tmp
