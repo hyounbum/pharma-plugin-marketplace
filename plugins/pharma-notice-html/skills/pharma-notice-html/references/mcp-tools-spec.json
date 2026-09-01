@@ -1,0 +1,1689 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "specVersion": "1.0.0",
+  "title": "제약사 공지 MCP 도구 명세",
+  "principles": [
+    "모든 입력과 출력은 구조화 JSON을 우선한다.",
+    "외부 웹 검색 또는 외부 사실 보완을 수행하지 않는다.",
+    "최종 HTML/PDF는 승인된 revision과 approvedContentHash에만 결합한다.",
+    "수정·제외·승인·생성 도구는 expectedRevision과 idempotencyKey를 사용한다.",
+    "도구 결과의 안정 식별자와 구조화 결과를 다음 호출에 재사용한다."
+  ],
+  "states": [
+    "IMAGE_UPLOADING",
+    "UPLOAD_COMPLETE",
+    "IMAGE_ANALYSIS",
+    "REVIEW_DRAFT",
+    "USER_EDITING",
+    "APPROVED",
+    "HTML_GENERATING",
+    "HTML_READY",
+    "PDF_GENERATING",
+    "COMPLETED",
+    "ERROR_REANALYSIS"
+  ],
+  "commonErrorSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "code",
+      "message",
+      "retryable"
+    ],
+    "properties": {
+      "code": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "retryable": {
+        "type": "boolean"
+      },
+      "details": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": true
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "analyze_notice_images",
+      "title": "제약사 공지 이미지 분석",
+      "description": "업로드가 완료된 이미지 묶음을 업로드 순서대로 판독하고 중복·연속 페이지를 통합하여 구조화된 초안을 만든다. 이미지와 사용자 입력 외의 외부 사실을 사용하지 않는다.",
+      "callWhen": [
+        "사용자가 '업로드 완료', '사진 끝', '전부 올림' 등 완료 의사를 명시했다.",
+        "sourceImages가 1개 이상이며 현재 상태가 UPLOAD_COMPLETE이다.",
+        "reset_notice_analysis 후 같은 이미지 또는 재업로드 이미지로 재분석한다."
+      ],
+      "doNotCallWhen": [
+        "이미지 업로드가 아직 진행 중이다.",
+        "사용자가 단순히 중간 분석 결과를 요구했으나 완료 의사를 밝히지 않았다.",
+        "현재 초안이 승인된 상태이며 reset_notice_analysis가 선행되지 않았다.",
+        "외부 웹 검색으로 누락 정보를 보완하려는 경우."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "sourceImages",
+          "uploadComplete",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceImages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sourceImageIndex",
+                "fileRef"
+              ],
+              "properties": {
+                "sourceImageIndex": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "fileRef": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fileName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              }
+            }
+          },
+          "uploadComplete": {
+            "const": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8
+          },
+          "analysisMode": {
+            "type": "string",
+            "enum": [
+              "INITIAL",
+              "REANALYSIS"
+            ],
+            "default": "INITIAL"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "notice",
+          "summary"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "$ref": "notice-schema.json"
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "totalImages",
+              "analyzedNotices",
+              "reuploadRequiredImageIndexes",
+              "manualInputRequiredImageIndexes",
+              "duplicateImageIndexes"
+            ],
+            "properties": {
+              "totalImages": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "analyzedNotices": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reuploadRequiredImageIndexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "manualInputRequiredImageIndexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "duplicateImageIndexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "UPLOAD_NOT_COMPLETE",
+        "NO_SOURCE_IMAGES",
+        "SCHEMA_VALIDATION_FAILED",
+        "IMAGE_FILE_UNAVAILABLE",
+        "ANALYSIS_FAILED",
+        "INVALID_STATE",
+        "IDEMPOTENCY_CONFLICT"
+      ],
+      "userConfirmation": {
+        "required": true,
+        "condition": "사용자의 업로드 완료 의사가 명시되어야 한다. 별도 재확인 대화는 필요하지 않다."
+      },
+      "callOrder": {
+        "before": [
+          "이미지 수집 및 번호 부여"
+        ],
+        "after": [
+          "get_notice_draft"
+        ],
+        "reanalysis": [
+          "reset_notice_analysis",
+          "analyze_notice_images",
+          "get_notice_draft"
+        ]
+      },
+      "idempotency": {
+        "key": "noticeId + ordered(sourceImage.sha256|fileRef) + analysisMode",
+        "behavior": "같은 키와 같은 입력이면 기존 분석 결과를 반환한다. 같은 키에 다른 입력이면 IDEMPOTENCY_CONFLICT."
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_notice_draft",
+      "title": "공지 초안 조회",
+      "description": "현재 구조화 초안, 수정 버전, 제외 상태, 승인 상태와 재업로드 필요 항목을 조회한다.",
+      "callWhen": [
+        "이미지 분석 직후 전체 확인 목록을 만들 때.",
+        "수정·제외·승인 전에 최신 revision과 항목 ID를 확인할 때.",
+        "HTML/PDF 생성 전 승인 데이터 해시를 검증할 때."
+      ],
+      "doNotCallWhen": [
+        "아직 분석 결과가 없고 상태가 IMAGE_UPLOADING 또는 UPLOAD_COMPLETE인 경우 초안 조회 목적으로 호출하지 않는다."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "includeExcluded": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "notice",
+          "unresolved"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "$ref": "notice-schema.json"
+          },
+          "unresolved": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "conflicts",
+              "reuploadRequiredImageIndexes",
+              "manualInputRequiredImageIndexes"
+            ],
+            "properties": {
+              "conflicts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reuploadRequiredImageIndexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "manualInputRequiredImageIndexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "DRAFT_NOT_AVAILABLE",
+        "SCHEMA_VALIDATION_FAILED"
+      ],
+      "userConfirmation": {
+        "required": false,
+        "condition": "읽기 전용 조회"
+      },
+      "callOrder": {
+        "before": [
+          "analyze_notice_images"
+        ],
+        "after": [
+          "update_notice_items",
+          "exclude_notice_items",
+          "approve_notice",
+          "render_notice_preview"
+        ]
+      },
+      "idempotency": {
+        "key": "없음",
+        "behavior": "읽기 전용이며 동일 revision에서 동일 결과를 반환한다."
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "update_notice_items",
+      "title": "공지 항목 수정",
+      "description": "사용자가 명시적으로 수정한 필드만 현재 초안에 반영하고 전체 초안을 다시 통합·중복·충돌 점검한다.",
+      "callWhen": [
+        "사용자가 분석 결과의 회사명, 제품명 및 함량, 성분명/성분량, 보험코드, 약가, 수수료, 날짜, 상태, 비고 등을 수정했다.",
+        "수기 입력 양식으로 보완값을 제공했다."
+      ],
+      "doNotCallWhen": [
+        "사용자 수정값이 없는데 모델이 추정값을 채우려는 경우.",
+        "승인 완료 후 reset_notice_analysis 없이 내용을 바꾸려는 경우.",
+        "항목 제외만 수행하는 경우에는 exclude_notice_items를 사용한다."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "expectedRevision",
+          "updates",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updates": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "itemId",
+                "patch"
+              ],
+              "properties": {
+                "itemId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "patch": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "minProperties": 1,
+                  "properties": {
+                    "companyName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "productName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "ingredient": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "dosage": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "insuranceCode": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "price": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "previousRate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "newRate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "changeRate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "status": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "effectiveDate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "settlementPeriod": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "remark": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "품절",
+                        "입고",
+                        "신제품",
+                        "약가변동",
+                        "수수료변동",
+                        "생산중단",
+                        "공급중단",
+                        "정산중단",
+                        "신규금지",
+                        "판매중단",
+                        "일부규격품절",
+                        "입고미정",
+                        "기타"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "notice",
+          "changedItemIds",
+          "conflicts"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "$ref": "notice-schema.json"
+          },
+          "changedItemIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "ITEM_NOT_FOUND",
+        "VERSION_CONFLICT",
+        "INVALID_STATE",
+        "SCHEMA_VALIDATION_FAILED",
+        "INVALID_RATE_CALCULATION",
+        "IDEMPOTENCY_CONFLICT"
+      ],
+      "userConfirmation": {
+        "required": false,
+        "condition": "사용자가 제출한 저장 동작 자체가 수정 의사 확인이다. 서버는 제출되지 않은 필드를 바꾸지 않는다."
+      },
+      "callOrder": {
+        "before": [
+          "get_notice_draft"
+        ],
+        "after": [
+          "get_notice_draft",
+          "추가 update_notice_items 또는 approve_notice"
+        ]
+      },
+      "idempotency": {
+        "key": "noticeId + expectedRevision + canonical(updates)",
+        "behavior": "같은 요청은 한 번만 revision을 증가시킨다. 재전송 시 최초 결과를 반환한다."
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "exclude_notice_items",
+      "title": "공지 항목 제외",
+      "description": "사용자가 제외를 요청한 항목의 excluded 상태를 변경한다. 제외된 항목은 미리보기와 최종 HTML/PDF에서 제거한다.",
+      "callWhen": [
+        "사용자가 특정 항목 제외 체크를 저장했다.",
+        "이전에 제외한 항목을 명시적으로 복원했다."
+      ],
+      "doNotCallWhen": [
+        "모델이 중복으로 추정했지만 사용자 확인 없이 항목을 제외하려는 경우.",
+        "승인 완료 후 reset_notice_analysis 없이 제외 상태를 바꾸려는 경우."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "expectedRevision",
+          "itemIds",
+          "excluded",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "itemIds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "excluded": {
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "notice",
+          "changedItemIds",
+          "excludedItemIds"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notice": {
+            "$ref": "notice-schema.json"
+          },
+          "changedItemIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludedItemIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "ITEM_NOT_FOUND",
+        "VERSION_CONFLICT",
+        "INVALID_STATE",
+        "IDEMPOTENCY_CONFLICT"
+      ],
+      "userConfirmation": {
+        "required": true,
+        "condition": "사용자가 체크박스 또는 명시적 제외/복원 요청을 제출해야 한다. 전체 항목 제외 정책은 [확인 필요]."
+      },
+      "callOrder": {
+        "before": [
+          "get_notice_draft"
+        ],
+        "after": [
+          "get_notice_draft",
+          "approve_notice"
+        ]
+      },
+      "idempotency": {
+        "key": "noticeId + expectedRevision + sorted(itemIds) + excluded",
+        "behavior": "동일 제외 상태 재적용은 no-op으로 처리하고 revision을 중복 증가시키지 않는다."
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "approve_notice",
+      "title": "공지 초안 승인",
+      "description": "사용자가 '그대로', '수정 없음', '이대로', '바로 생성' 또는 동등한 명시적 승인을 했을 때 현재 revision과 내용 해시를 고정한다.",
+      "callWhen": [
+        "사용자가 현재 전체 초안을 명시적으로 승인했다.",
+        "수정·수기 보완 후 다시 제시된 전체 목록을 승인했다."
+      ],
+      "doNotCallWhen": [
+        "사용자가 일부 항목만 확인했거나 승인 문구가 불명확하다.",
+        "재업로드/수기 입력 필요 이미지 또는 충돌이 해결되지 않았다.",
+        "최신 revision을 다시 조회하지 않았다."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "expectedRevision",
+          "approvalAction",
+          "approvalContentHash",
+          "userConfirmed",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "approvalAction": {
+            "type": "string",
+            "enum": [
+              "AS_IS",
+              "AFTER_EDITS"
+            ]
+          },
+          "approvalContentHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "userConfirmed": {
+            "const": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "approval"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "approval": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "approvalStatus",
+              "approvedRevision",
+              "approvedContentHash"
+            ],
+            "properties": {
+              "approvalStatus": {
+                "const": "APPROVED"
+              },
+              "approvedRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "approvedContentHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "VERSION_CONFLICT",
+        "APPROVAL_HASH_MISMATCH",
+        "UNRESOLVED_REQUIRED_INPUT",
+        "CONFLICT_UNRESOLVED",
+        "INVALID_STATE",
+        "IDEMPOTENCY_CONFLICT"
+      ],
+      "userConfirmation": {
+        "required": true,
+        "condition": "현재 전체 초안에 대한 사용자의 명시적 승인"
+      },
+      "callOrder": {
+        "before": [
+          "get_notice_draft"
+        ],
+        "after": [
+          "generate_notice_html",
+          "generate_notice_pdf"
+        ]
+      },
+      "idempotency": {
+        "key": "noticeId + expectedRevision + approvalContentHash",
+        "behavior": "이미 동일 revision/hash가 승인되었으면 같은 승인 결과를 반환한다."
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "render_notice_preview",
+      "title": "공지 HTML 미리보기 렌더링",
+      "description": "현재 초안을 기준 템플릿으로 임시 렌더링하여 ChatGPT UI에서 검토하게 한다. 최종 다운로드 HTML을 생성하거나 승인 상태를 바꾸지 않는다.",
+      "callWhen": [
+        "분석 결과 검토 또는 사용자 수정 후 레이아웃 미리보기가 필요하다.",
+        "최종 생성 전 데이터 배치와 한글 표시를 확인한다."
+      ],
+      "doNotCallWhen": [
+        "분석 전 또는 sourceImages가 없는 상태.",
+        "미리보기를 최종 승인이나 최종 파일 생성으로 간주하려는 경우."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "expectedRevision"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "includeExcluded": {
+            "const": false
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "preview"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preview": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "resourceUri",
+              "mimeType",
+              "contentHash",
+              "templateHash"
+            ],
+            "properties": {
+              "resourceUri": {
+                "type": "string"
+              },
+              "mimeType": {
+                "const": "text/html"
+              },
+              "contentHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "templateHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "DRAFT_NOT_AVAILABLE",
+        "VERSION_CONFLICT",
+        "TEMPLATE_ASSET_MISSING",
+        "HTML_RENDER_FAILED"
+      ],
+      "userConfirmation": {
+        "required": false,
+        "condition": "미리보기는 읽기 전용이며 최종 산출물이 아니다."
+      },
+      "callOrder": {
+        "before": [
+          "get_notice_draft"
+        ],
+        "after": [
+          "update_notice_items 또는 approve_notice"
+        ]
+      },
+      "idempotency": {
+        "key": "noticeId + revision + templateHash + includeExcluded=false",
+        "behavior": "동일 초안/템플릿은 캐시된 동일 미리보기를 반환할 수 있다."
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "generate_notice_html",
+      "title": "승인 공지 HTML 생성",
+      "description": "승인된 revision과 내용 해시만 사용하여 기준 HTML 구조·내부 CSS·base64 자산을 유지한 완전한 단일 HTML 파일을 생성한다.",
+      "callWhen": [
+        "approve_notice가 성공했고 승인 해시가 현재 데이터와 일치한다.",
+        "최종 HTML/PDF 생성 단계의 첫 번째 산출물 생성."
+      ],
+      "doNotCallWhen": [
+        "approvalStatus가 PENDING이다.",
+        "현재 revision 또는 내용 해시가 승인 시점과 다르다.",
+        "기준 HTML/로고/워터마크 자산을 읽지 못했다."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "expectedRevision",
+          "approvedContentHash",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "approvedContentHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "outputFileName": {
+            "type": "string",
+            "default": "제약사 공지.html"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "artifact",
+          "validation"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "artifact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "artifactId",
+              "fileName",
+              "mimeType",
+              "uri",
+              "sha256",
+              "contentHash",
+              "sizeBytes"
+            ],
+            "properties": {
+              "artifactId": {
+                "type": "string"
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "uri": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "contentHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "validation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "singleFile",
+              "startsWithDoctype",
+              "externalAssetCount",
+              "approvedContentMatch"
+            ],
+            "properties": {
+              "singleFile": {
+                "const": true
+              },
+              "startsWithDoctype": {
+                "const": true
+              },
+              "externalAssetCount": {
+                "const": 0
+              },
+              "approvedContentMatch": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "APPROVAL_REQUIRED",
+        "VERSION_CONFLICT",
+        "APPROVAL_HASH_MISMATCH",
+        "TEMPLATE_ASSET_MISSING",
+        "HTML_RENDER_FAILED",
+        "FILE_WRITE_FAILED",
+        "OUTPUT_CONTENT_MISMATCH",
+        "IDEMPOTENCY_CONFLICT"
+      ],
+      "userConfirmation": {
+        "required": true,
+        "condition": "별도 생성 확인이 아니라 approve_notice의 승인 기록이 필수"
+      },
+      "callOrder": {
+        "before": [
+          "approve_notice"
+        ],
+        "after": [
+          "generate_notice_pdf"
+        ]
+      },
+      "idempotency": {
+        "key": "approvedContentHash + templateHash + outputFileName",
+        "behavior": "동일 승인 데이터와 템플릿이면 기존 유효 artifact를 반환한다. 파일이 손상되었을 때만 재생성한다."
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "generate_notice_pdf",
+      "title": "승인 공지 PDF 생성",
+      "description": "generate_notice_html이 만든 최종 HTML을 그대로 사용하여 A4 무여백, 배경 그래픽 포함, 한글 정상 표시 PDF를 생성하고 내용·가독성 검사를 수행한다.",
+      "callWhen": [
+        "승인된 HTML artifact가 존재하고 승인 해시와 일치한다.",
+        "현재 GPT의 최종 단계에서 HTML과 PDF를 함께 제공해야 한다."
+      ],
+      "doNotCallWhen": [
+        "승인 전.",
+        "HTML artifact가 없거나 승인 데이터와 불일치한다.",
+        "PDF에서 데이터 내용을 새로 가공하거나 축약하려는 경우."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "expectedRevision",
+          "approvedContentHash",
+          "htmlArtifactId",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "approvedContentHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "htmlArtifactId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outputFileName": {
+            "type": "string",
+            "default": "제약사 공지.pdf"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "artifact",
+          "validation"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "artifact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "artifactId",
+              "fileName",
+              "mimeType",
+              "uri",
+              "sha256",
+              "contentHash",
+              "sizeBytes"
+            ],
+            "properties": {
+              "artifactId": {
+                "type": "string"
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "uri": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "contentHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "validation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pageSize",
+              "landscape",
+              "marginMm",
+              "printBackground",
+              "displayHeaderFooter",
+              "pageCount",
+              "blankPageCount",
+              "koreanGlyphCheck",
+              "approvedContentMatch",
+              "readabilityCheck"
+            ],
+            "properties": {
+              "pageSize": {
+                "const": "A4"
+              },
+              "landscape": {
+                "const": true
+              },
+              "marginMm": {
+                "const": 0
+              },
+              "printBackground": {
+                "const": true
+              },
+              "displayHeaderFooter": {
+                "const": false
+              },
+              "pageCount": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "blankPageCount": {
+                "const": 0
+              },
+              "koreanGlyphCheck": {
+                "type": "string",
+                "enum": [
+                  "PASS",
+                  "FAIL"
+                ]
+              },
+              "approvedContentMatch": {
+                "const": true
+              },
+              "readabilityCheck": {
+                "type": "string",
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "MANUAL_REVIEW_REQUIRED"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "APPROVAL_REQUIRED",
+        "VERSION_CONFLICT",
+        "APPROVAL_HASH_MISMATCH",
+        "HTML_ARTIFACT_NOT_FOUND",
+        "HTML_ARTIFACT_MISMATCH",
+        "PDF_RENDER_FAILED",
+        "KOREAN_FONT_UNAVAILABLE",
+        "BLANK_PAGE_DETECTED",
+        "READABILITY_CHECK_FAILED",
+        "OUTPUT_CONTENT_MISMATCH",
+        "FILE_WRITE_FAILED",
+        "IDEMPOTENCY_CONFLICT"
+      ],
+      "userConfirmation": {
+        "required": true,
+        "condition": "approve_notice 승인 기록으로 충족. 현재 GPT 규칙상 HTML/PDF 중 무엇을 만들지 다시 묻지 않는다."
+      },
+      "callOrder": {
+        "before": [
+          "approve_notice",
+          "generate_notice_html"
+        ],
+        "after": [
+          "최종 artifact 링크 반환"
+        ]
+      },
+      "idempotency": {
+        "key": "htmlArtifact.sha256 + approvedContentHash + printSettingsHash + outputFileName",
+        "behavior": "동일 HTML과 인쇄 설정이면 기존 유효 PDF를 반환한다."
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "reset_notice_analysis",
+      "title": "공지 분석 초기화",
+      "description": "사용자의 명시적 재분석 요청에 따라 현재 분석·수정·승인 상태를 해제하되 원본 이미지 참조를 보존하고 재분석 가능한 상태로 되돌린다.",
+      "callWhen": [
+        "사용자가 '재분석'을 명시적으로 요청했다.",
+        "흐린 이미지 재업로드 후 기존 분석을 다시 수행해야 한다.",
+        "HTML/PDF 생성 오류의 원인이 데이터/분류 분석으로 확인됐다."
+      ],
+      "doNotCallWhen": [
+        "단순 필드 수정으로 해결 가능한 경우.",
+        "사용자의 재분석 의사가 없는 경우.",
+        "원본 이미지까지 삭제하려는 경우. 해당 동작은 현재 GPT 규칙에 없어 [확인 필요]."
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "noticeId",
+          "expectedRevision",
+          "scope",
+          "preserveSourceImages",
+          "userConfirmed",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "noticeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scope": {
+            "const": "ANALYSIS_ONLY"
+          },
+          "preserveSourceImages": {
+            "const": true
+          },
+          "userConfirmed": {
+            "const": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "noticeId",
+          "state",
+          "revision",
+          "requestId",
+          "warnings",
+          "reset"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "noticeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IMAGE_UPLOADING",
+              "UPLOAD_COMPLETE",
+              "IMAGE_ANALYSIS",
+              "REVIEW_DRAFT",
+              "USER_EDITING",
+              "APPROVED",
+              "HTML_GENERATING",
+              "HTML_READY",
+              "PDF_GENERATING",
+              "COMPLETED",
+              "ERROR_REANALYSIS"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reset": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "approvalStatus",
+              "removedArtifactIds",
+              "sourceImageCount"
+            ],
+            "properties": {
+              "approvalStatus": {
+                "const": "PENDING"
+              },
+              "removedArtifactIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "sourceImageCount": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      },
+      "errorCodes": [
+        "NOTICE_NOT_FOUND",
+        "VERSION_CONFLICT",
+        "INVALID_STATE",
+        "RESET_FAILED",
+        "IDEMPOTENCY_CONFLICT"
+      ],
+      "userConfirmation": {
+        "required": true,
+        "condition": "사용자의 명시적 재분석 요청"
+      },
+      "callOrder": {
+        "before": [
+          "get_notice_draft"
+        ],
+        "after": [
+          "analyze_notice_images"
+        ]
+      },
+      "idempotency": {
+        "key": "noticeId + expectedRevision + scope",
+        "behavior": "동일 reset 요청은 한 번만 상태를 변경한다. 이미 reset된 경우 기존 결과를 반환한다."
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": false
+      }
+    }
+  ]
+}
